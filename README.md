@@ -98,9 +98,9 @@ A RESTful blog API built with Flask, using SQLite database stored in a Docker vo
 curl -X POST http://localhost:5000/api/posts \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "My First Blog Post",
-    "content": "This is the content of my first blog post!",
-    "author": "John Doe"
+    "title": "Kyushu Chronicles",
+    "content": "There will be blood, and it will be red in color...",
+    "author": "Shinobi Hasegawa"
   }'
 ```
 
