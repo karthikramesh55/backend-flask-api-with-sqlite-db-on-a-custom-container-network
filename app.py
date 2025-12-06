@@ -1,147 +1,74 @@
 from flask import Flask, request, jsonify
-from datetime import datetime
 import sqlite3
 import os
 
 app = Flask(__name__)
-
-# Database configuration
 DATABASE_PATH = os.environ.get('DATABASE_PATH', '/data/blog.db')
 
-def get_db_connection():
-    """Create a database connection"""
+def get_db():
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Initialize the database with the posts table"""
-    conn = get_db_connection()
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS posts (
+    with get_db() as conn:
+        conn.execute('''CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             author TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+        )''')
 
-# Initialize database on startup
+# Initializing the database upon starting the serving application
 init_db()
 
-@app.route('/health', methods=['GET'])
+@app.route('/health')
 def health():
-    """Health check endpoint"""
-    return jsonify({'status': 'healthy', 'service': 'blog-api'}), 200
+    return {'status': 'healthy', 'service': 'blog-api'}
 
-@app.route('/api/posts', methods=['GET'])
-def get_posts():
-    """Get all blog posts"""
-    conn = get_db_connection()
-    posts = conn.execute('SELECT * FROM posts ORDER BY created_at DESC').fetchall()
-    conn.close()
+@app.route('/api/posts', methods=['GET', 'POST'])
+def posts():
+    if request.method == 'GET':
+        with get_db() as conn:
+            rows = conn.execute('SELECT * FROM posts ORDER BY created_at DESC').fetchall()
+        return {'posts': [dict(row) for row in rows]}
     
-    posts_list = []
-    for post in posts:
-        posts_list.append({
-            'id': post['id'],
-            'title': post['title'],
-            'content': post['content'],
-            'author': post['author'],
-            'created_at': post['created_at'],
-            'updated_at': post['updated_at']
-        })
-    
-    return jsonify({'posts': posts_list}), 200
-
-@app.route('/api/posts/<int:post_id>', methods=['GET'])
-def get_post(post_id):
-    """Get a specific blog post by ID"""
-    conn = get_db_connection()
-    post = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
-    conn.close()
-    
-    if post is None:
-        return jsonify({'error': 'Post not found'}), 404
-    
-    return jsonify({
-        'id': post['id'],
-        'title': post['title'],
-        'content': post['content'],
-        'author': post['author'],
-        'created_at': post['created_at'],
-        'updated_at': post['updated_at']
-    }), 200
-
-@app.route('/api/posts', methods=['POST'])
-def create_post():
-    """Create a new blog post"""
     data = request.get_json()
+    if not all(k in data for k in ['title', 'content', 'author']):
+        return {'error': 'Missing required fields: title, content, author'}, 400
     
-    if not data or not data.get('title') or not data.get('content') or not data.get('author'):
-        return jsonify({'error': 'Missing required fields: title, content, author'}), 400
-    
-    conn = get_db_connection()
-    cursor = conn.execute(
-        'INSERT INTO posts (title, content, author) VALUES (?, ?, ?)',
-        (data['title'], data['content'], data['author'])
-    )
-    conn.commit()
-    post_id = cursor.lastrowid
-    conn.close()
-    
-    return jsonify({
-        'message': 'Post created successfully',
-        'id': post_id
-    }), 201
+    with get_db() as conn:
+        cursor = conn.execute('INSERT INTO posts (title, content, author) VALUES (?, ?, ?)',
+                            (data['title'], data['content'], data['author']))
+        conn.commit()
+    return {'message': 'Post created', 'id': cursor.lastrowid}, 201
 
-@app.route('/api/posts/<int:post_id>', methods=['PUT'])
-def update_post(post_id):
-    """Update an existing blog post"""
-    data = request.get_json()
-    
-    if not data:
-        return jsonify({'error': 'No data provided'}), 400
-    
-    conn = get_db_connection()
-    post = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
-    
-    if post is None:
-        conn.close()
-        return jsonify({'error': 'Post not found'}), 404
-    
-    title = data.get('title', post['title'])
-    content = data.get('content', post['content'])
-    author = data.get('author', post['author'])
-    
-    conn.execute(
-        'UPDATE posts SET title = ?, content = ?, author = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        (title, content, author, post_id)
-    )
-    conn.commit()
-    conn.close()
-    
-    return jsonify({'message': 'Post updated successfully'}), 200
-
-@app.route('/api/posts/<int:post_id>', methods=['DELETE'])
-def delete_post(post_id):
-    """Delete a blog post"""
-    conn = get_db_connection()
-    post = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
-    
-    if post is None:
-        conn.close()
-        return jsonify({'error': 'Post not found'}), 404
-    
-    conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
-    conn.commit()
-    conn.close()
-    
-    return jsonify({'message': 'Post deleted successfully'}), 200
+@app.route('/api/posts/<int:post_id>', methods=['GET', 'PUT', 'DELETE'])
+def post(post_id):
+    with get_db() as conn:
+        row = conn.execute('SELECT * FROM posts WHERE id = ?', (post_id,)).fetchone()
+        
+        if not row:
+            return {'error': 'Post not found'}, 404
+        
+        if request.method == 'GET':
+            return dict(row)
+        
+        if request.method == 'DELETE':
+            conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
+            conn.commit()
+            return {'message': 'Post deleted'}
+        
+        data = request.get_json() or {}
+        conn.execute('''UPDATE posts SET title = ?, content = ?, author = ?, 
+                       updated_at = CURRENT_TIMESTAMP WHERE id = ?''',
+                    (data.get('title', row['title']), 
+                     data.get('content', row['content']),
+                     data.get('author', row['author']), post_id))
+        conn.commit()
+        return {'message': 'Post updated'}
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
