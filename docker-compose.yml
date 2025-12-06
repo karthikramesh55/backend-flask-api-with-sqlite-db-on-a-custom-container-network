@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  blog-api:
+    build: .
+    container_name: blog-flask-api
+    ports:
+      - "5000:5000"
+    volumes:
+      - blog-data:/data
+    networks:
+      - blog-network
+    environment:
+      - DATABASE_PATH=/data/blog.db
+    restart: unless-stopped
+
+# Define custom network
+networks:
+  blog-network:
+    driver: bridge
+    name: blog-custom-network
+
+# Define volume for SQLite database persistence
+volumes:
+  blog-data:
+    driver: local
+    name: blog-database-volume
